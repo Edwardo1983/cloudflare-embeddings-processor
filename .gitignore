@@ -1,0 +1,35 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Environment and secrets
+.env
+.env.*
+
+# IDE / editor files
+.idea/
+.vscode/
+.claude
+
+# Generated data
+extracted_texts/
+logs/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Personal files
+materiale_didactice
