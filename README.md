@@ -216,6 +216,45 @@ Central configuration management with environment variable support.
 - Handles Romanian text and special characters correctly
 
 ## Troubleshooting
+## Critical Fixes (v3.0)
+
+### 1. **Deterministic Vector ID Strategy** (Production Critical)
+- **Problem**: Time-based IDs caused duplicate vectors on re-runs
+  - First run: 1000 vectors stored
+  - Second run: 2000 vectors (1000 old + 1000 new duplicates)
+  - Index accumulates stale data with each pipeline re-execution
+- **Solution**: MD5 hash-based IDs from `(source_filename + chunk_index)`
+- **Benefits**:
+  - Idempotent: Re-running pipeline updates vectors instead of creating duplicates
+  - Reproducible: Same content always gets same ID
+  - Efficient: No accumulation of stale vectors in Pinecone
+- **Implementation**: `generate_embeddings.py` lines 9, 323-327
+
+### 2. **Folder Structure Preservation in Extraction Output**
+- **Problem**: Filename collisions when PDFs with same name exist in different folders
+- **Solution**: Preserve folder hierarchy in output directory matching source structure
+- **Benefits**:
+  - No data loss from filename collisions
+  - Source location fully traceable from output directory structure
+  - Metadata includes path context for better search indexing
+- **Implementation**: `extract_pdfs.py` lines 141-143
+
+### 3. **CLI Argument Support for test_search.py**
+- **Problem**: Hardcoded extraction directory prevented headless testing against different outputs
+- **Solution**: Added `--extracted-dir` CLI argument with sensible default
+- **Usage**:
+  ```bash
+  python test_search.py                              # Default: ./extracted_texts
+  python test_search.py --extracted-dir ./custom_dir # Custom directory
+  python test_search.py --help                       # Show options
+  ```
+- **Benefits**:
+  - Enables headless automation without wrapper scripts
+  - Test against multiple extraction outputs
+  - Flexible testing and validation workflows
+  - Integration-friendly for CI/CD pipelines
+- **Implementation**: `test_search.py` lines 24, 239-260
+
 
 ### API Errors
 - Verify API tokens in `.env`

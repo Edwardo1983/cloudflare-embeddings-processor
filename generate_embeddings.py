@@ -6,6 +6,7 @@ Supports batch processing and efficient vector storage
 import json
 import logging
 import time
+import hashlib
 from pathlib import Path
 from typing import List, Dict, Tuple
 import requests
@@ -318,7 +319,12 @@ class EmbeddingPipeline:
         vectors_to_upsert = []
         for chunk_idx, text, embedding in text_embeddings:
             chunk_data = all_chunks[chunk_idx]  # Use returned index to access correct metadata
-            vector_id = f"chunk_{chunk_idx}_{int(time.time())}"
+
+            # Generate deterministic ID from source file + chunk index
+            # This prevents duplicate vectors when re-running the pipeline
+            source_file = chunk_data['metadata'].get('source_file', 'unknown')
+            id_hash = hashlib.md5(f"{source_file}_{chunk_idx}".encode()).hexdigest()[:12]
+            vector_id = f"vec_{id_hash}"
 
             vectors_to_upsert.append((
                 vector_id,

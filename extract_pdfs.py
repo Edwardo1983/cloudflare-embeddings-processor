@@ -136,9 +136,10 @@ class PDFExtractor:
             if result:
                 successful += 1
 
-                # Save individual extraction
+                # Save individual extraction, preserving folder structure to avoid filename collisions
+                # E.g., materiale_didactice/Folder1/subfolder/file.pdf → extracted_texts/Folder1/subfolder/file_extracted.json
                 relative_path = pdf_path.relative_to(self.source_dir)
-                output_path = self.output_dir / f"{relative_path.stem}_extracted.json"
+                output_path = self.output_dir / relative_path.parent / f"{relative_path.stem}_extracted.json"
                 output_path.parent.mkdir(parents=True, exist_ok=True)
 
                 with open(output_path, 'w', encoding='utf-8') as f:

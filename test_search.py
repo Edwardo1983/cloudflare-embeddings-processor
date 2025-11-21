@@ -21,6 +21,7 @@ import json
 import logging
 import time
 import os
+import argparse
 from typing import List
 from pathlib import Path
 
@@ -232,10 +233,30 @@ class ExtractionValidator:
 
 
 def main():
-    """Main test entry point"""
+    """Main test entry point with CLI arguments"""
+
+    # Setup argument parser
+    parser = argparse.ArgumentParser(
+        description='Test search functionality and validate extractions',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python test_search.py                    # Use default extracted_texts dir
+  python test_search.py --extracted-dir ./custom_extraction  # Use custom dir
+  python test_search.py --help             # Show this help message
+        """
+    )
+
+    parser.add_argument(
+        '--extracted-dir',
+        default='./extracted_texts',
+        help='Path to extracted texts directory (default: ./extracted_texts)'
+    )
+
+    args = parser.parse_args()
 
     # First, validate extractions (no API needed)
-    validator = ExtractionValidator()
+    validator = ExtractionValidator(args.extracted_dir)
     extraction_stats = validator.validate_extractions()
 
     # If extraction is valid and APIs are available, test search
@@ -286,7 +307,7 @@ def main():
         print("\n" + "="*80)
         print("EXTRACTION VALIDATION FAILED")
         print("="*80)
-        print("No valid extracted files found.")
+        print(f"No valid extracted files found in: {args.extracted_dir}")
         print("Run: python extract_pdfs.py")
         print("="*80 + "\n")
 
