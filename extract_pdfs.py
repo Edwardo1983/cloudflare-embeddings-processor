@@ -10,6 +10,10 @@ import argparse
 import sys
 from pathlib import Path
 from PyPDF2 import PdfReader
+import hashlib
+from datetime import datetime
+import hashlib
+from datetime import datetime
 from config import PDF_SOURCE_DIR, EXTRACTED_TEXT_DIR, LOG_LEVEL
 
 # Setup logging
@@ -20,13 +24,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class PDFExtractor:
-    """Extract text from PDF files"""
+    """Extract text from PDF files with incremental processing"""
+
+    MANIFEST_FILE = ".extraction_manifest.json"
 
     def __init__(self, source_dir=PDF_SOURCE_DIR, output_dir=EXTRACTED_TEXT_DIR):
         self.source_dir = Path(source_dir)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.extracted_files = []
+        self.manifest_path = self.output_dir / self.MANIFEST_FILE
+        self.manifest = self.load_manifest()
+        self.manifest_path = self.output_dir / self.MANIFEST_FILE
+        self.manifest = self.load_manifest()
 
     def extract_text_from_pdf(self, pdf_path):
         """
@@ -36,12 +46,14 @@ class PDFExtractor:
             pdf_path: Path to PDF file
 
         Returns:
-            dict: {pages: int, text: str, metadata: dict}
+            dict: {pages: int, text: str, metadata: dict, extraction_status: str}
         """
         try:
             reader = PdfReader(pdf_path)
             text_content = []
             num_pages = len(reader.pages)
+            extraction_status = None
+            error_log = None
 
             for page_num, page in enumerate(reader.pages, 1):
                 try:
@@ -74,12 +86,77 @@ class PDFExtractor:
                 result['metadata']['pdf_title'] = reader.metadata.get('/Title', 'Unknown')
                 result['metadata']['pdf_author'] = reader.metadata.get('/Author', 'Unknown')
 
-            logger.info(f"Extracted {len(text_content)} pages from {pdf_path.name}")
+            logger.info(f"Extracted {len(text_content)} pages from {pdf_path.name} [{extraction_status}]")
             return result
 
         except Exception as e:
             logger.error(f"Error processing PDF {pdf_path}: {e}")
             return None
+
+    def load_manifest(self):
+        """Load extraction manifest or create new one"""
+        if self.manifest_path.exists():
+            try:
+                with open(self.manifest_path, 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+                logger.info(f"Loaded manifest with {len(manifest.get('files', {}))} tracked files")
+                return manifest
+            except Exception as e:
+                logger.warning(f"Error loading manifest: {e}. Creating new manifest.")
+                return self._create_new_manifest()
+        return self._create_new_manifest()
+
+    def _create_new_manifest(self):
+        """Create new manifest structure"""
+        return {
+            'extraction_version': '1.1',
+            'last_updated': datetime.now().isoformat(),
+            'files': {}
+        }
+
+    def save_manifest(self):
+        """Save manifest to disk"""
+        self.manifest['last_updated'] = datetime.now().isoformat()
+        try:
+            with open(self.manifest_path, 'w', encoding='utf-8') as f:
+                json.dump(self.manifest, f, ensure_ascii=False, indent=2)
+            logger.info(f"Manifest saved with {len(self.manifest['files'])} files")
+        except Exception as e:
+            logger.error(f"Error saving manifest: {e}")
+
+    def calculate_file_hash(self, pdf_path):
+        """Calculate MD5 hash of PDF file for change detection"""
+        try:
+            hash_md5 = hashlib.md5()
+            with open(pdf_path, 'rb') as f:
+                for chunk in iter(lambda: f.read(4096), b''):
+                    hash_md5.update(chunk)
+            return hash_md5.hexdigest()
+        except Exception as e:
+            logger.error(f"Error calculating hash for {pdf_path}: {e}")
+            return None
+
+    def should_process_file(self, pdf_path, force=False):
+        """Determine if file should be processed based on hash comparison"""
+        if force:
+            return True, "Force reprocessing"
+
+        relative_path = str(pdf_path.relative_to(self.source_dir))
+        current_hash = self.calculate_file_hash(pdf_path)
+
+        if not current_hash:
+            return False, "Failed to calculate file hash"
+
+        if relative_path not in self.manifest['files']:
+            return True, "New file"
+
+        stored_info = self.manifest['files'][relative_path]
+        stored_hash = stored_info.get('source_hash')
+
+        if stored_hash != current_hash:
+            return True, "File modified (hash changed)"
+
+        return False, "File unchanged"
 
     def extract_specific_folders(self, school_folders):
         """
@@ -103,7 +180,7 @@ class PDFExtractor:
 
         return found_pdfs
 
-    def extract_all(self, specific_folders=None, limit=None):
+    def extract_all(self, specific_folders=None, limit=None, incremental=False, force=False):
         """
         Extract text from all PDFs in source directory
 
@@ -124,13 +201,34 @@ class PDFExtractor:
         if limit:
             pdf_files = pdf_files[:limit]
 
-        logger.info(f"Processing {len(pdf_files)} PDF files")
+        logger.info(f"Found {len(pdf_files)} PDF files")
+
+        # Filter files if incremental mode
+        files_to_process = []
+        skipped_files = []
+
+        if incremental and not force:
+            logger.info("Running in incremental mode - checking for changes")
+            for pdf_path in pdf_files:
+                should_process, reason = self.should_process_file(pdf_path, force=force)
+                if should_process:
+                    files_to_process.append(pdf_path)
+                else:
+                    skipped_files.append((pdf_path, reason))
+            logger.info(f"Processing {len(files_to_process)} new/modified files, skipping {len(skipped_files)} unchanged")
+        else:
+            files_to_process = pdf_files
+            if force:
+                logger.info("Force reprocessing all files")
+            else:
+                logger.info(f"Processing all {len(files_to_process)} files")
 
         successful = 0
         failed = 0
+        no_text = 0
         results = []
 
-        for pdf_path in pdf_files:
+        for pdf_path in files_to_process:
             result = self.extract_text_from_pdf(pdf_path)
 
             if result:
@@ -153,6 +251,20 @@ class PDFExtractor:
                     'text_length': len(result['text']),
                     'output_file': str(output_path)
                 })
+
+                # Update manifest with file tracking
+                relative_path_str = str(relative_path)
+                source_hash = self.calculate_file_hash(pdf_path)
+                extracted_hash = hashlib.md5(result['text'].encode()).hexdigest()
+
+                self.manifest['files'][relative_path_str] = {
+                    'source_hash': source_hash,
+                    'extracted_hash': extracted_hash,
+                    'extracted_pages': result['extracted_pages'],
+                    'total_pages': result['pages'],
+                    'extraction_status': result.get('extraction_status', 'success'),
+                    'timestamp': datetime.now().isoformat()
+                }
             else:
                 failed += 1
 
@@ -169,8 +281,12 @@ class PDFExtractor:
         with open(summary_path, 'w', encoding='utf-8') as f:
             json.dump(summary, f, ensure_ascii=False, indent=2)
 
+        # Save manifest
+        self.save_manifest()
+
         logger.info(f"Extraction complete: {successful} successful, {failed} failed")
         logger.info(f"Summary saved to {summary_path}")
+        logger.info(f"Manifest saved to {self.manifest_path}")
 
         return summary
 
@@ -207,6 +323,16 @@ Examples:
         type=int,
         help='Limit number of PDFs to process'
     )
+    parser.add_argument(
+        '--incremental',
+        action='store_true',
+        help='Only process new/modified files (requires previous run)'
+    )
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Force reprocessing of all files even if unchanged'
+    )
 
     args = parser.parse_args()
 
@@ -231,7 +357,12 @@ Examples:
 
     # Create extractor and process
     extractor = PDFExtractor()
-    summary = extractor.extract_all(specific_folders=specific_folders, limit=args.limit)
+    summary = extractor.extract_all(
+        specific_folders=specific_folders,
+        limit=args.limit,
+        incremental=args.incremental,
+        force=args.force
+    )
 
     # Print summary
     print("\n" + "="*60)
@@ -240,8 +371,16 @@ Examples:
     print(f"Total files processed: {summary['total_files']}")
     print(f"Successful extractions: {summary['successful']}")
     print(f"Failed extractions: {summary['failed']}")
+    if summary.get('no_text_files', 0) > 0:
+        print(f"No-text files (skipped): {summary['no_text_files']}")
+    if summary.get('skipped', 0) > 0:
+        print(f"Unchanged files (skipped): {summary['skipped']}")
     if args.limit:
         print(f"(Limited to: {args.limit} PDFs)")
+    if args.incremental:
+        print(f"Mode: INCREMENTAL")
+    if args.force:
+        print(f"Mode: FORCE REPROCESS")
     print(f"Output directory: {summary['output_directory']}")
     print("="*60 + "\n")
 
