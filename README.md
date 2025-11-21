@@ -357,6 +357,232 @@ Automatic change detection using `.extraction_manifest.json`:
 - Logged in manifest
 - Pipeline continues with next file
 
+## Subject-Based Namespace Isolation (v5.0)
+
+### Overview
+
+Phase 5.0 introduces **complete subject-based namespace isolation** in Pinecone to solve the context-confusion problem:
+
+**Problem**: Without isolation, all embeddings mixed in single index → "1+1" could come from Matematica, Dezvoltare Personala, OR Geografie, causing factually correct but contextually wrong responses.
+
+**Solution**: Separate Pinecone namespaces per subject course path with dual-interface search supporting both explicit subject selection and auto-routing.
+
+### Architecture
+
+#### Metadata Extraction
+
+**Subject Path Parsing** (`extract_pdfs.py`):
+- Folder hierarchy: `School/Class/Subject/PDFs`
+- Example: `Scoala_Normala/clasa_0/Matematica/document.pdf`
+- Automatically extracts and stores: `school`, `class`, `subject` in metadata
+
+**Manifest Tracking** (`.extraction_manifest.json`):
+- Now includes subject information per file:
+  ```json
+  {
+    "Scoala_Normala/clasa_0/Matematica/file.pdf": {
+      "school": "Scoala_Normala",
+      "class": "clasa_0",
+      "subject": "Matematica",
+      "extraction_status": "success",
+      "timestamp": "2025-11-21T..."
+    }
+  }
+  ```
+
+#### Namespace Management
+
+**Namespace Format** (`generate_embeddings.py`):
+- Format: `{school}_{class}_{subject}` (lowercase, underscores)
+- Example: `scoala_normala_clasa_0_matematica`
+- Each namespace completely isolated in Pinecone index
+
+**Vector Grouping**:
+1. Load extracted texts with subject metadata
+2. Group chunks by calculated namespace
+3. Upsert each group to its corresponding namespace
+4. Vectors in same namespace searchable together; isolated from others
+
+**Subject Mapping** (`subject_mapping.json`):
+- Centralized subject configuration
+- Maps subject names to namespaces
+- Contains keywords for auto-routing:
+  ```json
+  {
+    "primary": "Matematica",
+    "aliases": ["Math", "Aritmetica"],
+    "keywords": ["plus", "minus", "ecuatie", "teorema", ...],
+    "namespace": "matematica"
+  }
+  ```
+
+#### Dual-Interface Search
+
+**New Search Module** (`search.py`):
+
+**1. Explicit Subject Selection** (User specifies subject):
+```bash
+python search.py --subject "Matematica" --query "How to solve equations?"
+python search.py --subject "Limba Romana" --class "clasa_1" --query "What is a sonnet?"
+```
+- Searches only in specified subject namespace
+- Results guaranteed from correct subject context
+- Best for targeted, precise searches
+
+**2. Auto-Route Mode** (Keyword-based routing):
+```bash
+python search.py --auto-route --query "What is photosynthesis?"
+```
+- Analyzes query keywords against subject mapping
+- Routes to best-matching subject automatically
+- Falls back to all subjects if no clear match
+- Best for general exploratory searches
+
+**3. Utility Commands**:
+```bash
+# List all available subjects
+python search.py --list-subjects
+
+# Show Pinecone index statistics
+python search.py --stats
+
+# Custom school/class
+python search.py --subject "Limba Romana" --school "Scoala_de_Muzica_George_Enescu" --class "clasa_1" --query "..."
+```
+
+### Implementation Details
+
+#### extract_pdfs.py Changes
+- Added `parse_subject_from_path()` method
+- Extracts school, class, subject from path hierarchy
+- Tracks identified subjects in summary
+- Updates manifest with subject per file
+
+#### generate_embeddings.py Changes
+- Added `_load_subject_mapping()` to load configuration
+- Added `_calculate_namespace()` to generate namespace from metadata
+- Modified `upsert_vectors()` to accept optional `namespace` parameter
+- Modified `search()` to accept optional `namespace` parameter
+- Updated `process_pipeline()` to:
+  - Group vectors by namespace
+  - Upsert each group to its namespace
+  - Track namespaces created
+  - Report namespace statistics
+
+#### search.py (NEW)
+- `SubjectRouter` class: Route queries to appropriate namespaces
+- `DualInterfaceSearch` class: Unified search interface
+- Supports explicit subject selection or auto-routing
+- Provides utility commands (list subjects, show stats)
+
+### Usage Examples
+
+**Basic Search (Explicit)**:
+```bash
+# Search only in Matematica for class 0
+python search.py --subject "Matematica" --query "What is addition?"
+# Output: Results only from scoala_normala_clasa_0_matematica namespace
+```
+
+**Auto-Route Search**:
+```bash
+# System automatically determines subject from query keywords
+python search.py --auto-route --query "Describe photosynthesis"
+# Output: Auto-routed to Stiinte_Naturale based on keyword matching
+```
+
+**Custom School/Class**:
+```bash
+python search.py --subject "Muzica" --school "Scoala_de_Muzica_George_Enescu" --class "clasa_2" --query "What is a sonata?"
+```
+
+**List Available Subjects**:
+```bash
+python search.py --list-subjects
+# Output:
+# Available Subjects:
+# ==================
+#   - Matematica
+#   - Limba Romana
+#   - Geografie
+#   - ... (all subjects)
+```
+
+**View Index Statistics**:
+```bash
+python search.py --stats
+# Shows namespace counts, vector distribution across subjects
+```
+
+### Workflow
+
+1. **Extract PDFs** (subject metadata auto-detected):
+   ```bash
+   python extract_pdfs.py --all
+   ```
+   Output: Extractions include school/class/subject metadata
+
+2. **Generate Embeddings** (namespace isolation automatic):
+   ```bash
+   python generate_embeddings.py
+   ```
+   Output: Vectors stored in subject-specific namespaces
+
+3. **Search** (explicit or auto-route):
+   ```bash
+   # Explicit: User chooses subject
+   python search.py --subject "Matematica" --query "..."
+
+   # Auto-route: System chooses subject
+   python search.py --auto-route --query "..."
+   ```
+
+### Benefits
+
+| Aspect | Before (Mixed Index) | After (Namespaces) |
+|--------|-------|--------|
+| "1+1" search | Results from ALL subjects | Results only from Matematica |
+| Context correctness | High confusion | High accuracy |
+| AI response quality | Diluted/confused | Focused/precise |
+| Query filtering | Manual (offline) | Automatic (online) |
+| Subject discovery | Manual exploration | Explicit list |
+| Admin control | Single index | Per-subject control |
+
+### Configuration
+
+**Subject Mapping** (`subject_mapping.json`):
+- Add new subjects to `subjects[]` array
+- Include aliases for common name variations
+- Provide keywords for auto-routing
+- Namespace format follows pattern: `lowercase_with_underscores`
+
+Example add:
+```json
+{
+  "primary": "Istoria",
+  "aliases": ["History", "Istorie"],
+  "keywords": ["epoca", "razboi", "imperiu", "rege"],
+  "namespace": "istoria"
+}
+```
+
+### Troubleshooting
+
+**No namespace created for vectors**:
+- Check folder structure follows `School/Class/Subject/PDFs`
+- Verify metadata extraction: `extraction_summary.json` shows `identified_subjects`
+- Check extraction manifest for `school`, `class`, `subject` fields
+
+**Auto-route routes to wrong subject**:
+- Review query keywords vs. `subject_mapping.json`
+- Update keywords for better matching
+- Use explicit mode `--subject` for precision
+
+**Search returns empty**:
+- Verify namespace name matches extraction output
+- Check namespace exists in Pinecone: `python search.py --stats`
+- Ensure embeddings were generated: `generate_embeddings.py` completed successfully
+
 ## Troubleshooting
 
 ### API Errors

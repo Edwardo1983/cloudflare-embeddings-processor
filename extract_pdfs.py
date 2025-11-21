@@ -12,8 +12,6 @@ from pathlib import Path
 from PyPDF2 import PdfReader
 import hashlib
 from datetime import datetime
-import hashlib
-from datetime import datetime
 from config import PDF_SOURCE_DIR, EXTRACTED_TEXT_DIR, LOG_LEVEL
 
 # Setup logging
@@ -35,8 +33,50 @@ class PDFExtractor:
         self.extracted_files = []
         self.manifest_path = self.output_dir / self.MANIFEST_FILE
         self.manifest = self.load_manifest()
-        self.manifest_path = self.output_dir / self.MANIFEST_FILE
-        self.manifest = self.load_manifest()
+        self.identified_subjects = set()
+
+    def parse_subject_from_path(self, pdf_path):
+        """
+        Extract school, class, and subject from PDF path hierarchy
+
+        Expected structure:
+        materiale_didactice/School/Class/Subject/document.pdf
+        e.g., materiale_didactice/Scoala_Normala/clasa_0/Matematica/file.pdf
+
+        Args:
+            pdf_path: Path object of the PDF file
+
+        Returns:
+            dict: {school: str, class: str, subject: str} or {school: None, class: None, subject: None}
+        """
+        try:
+            relative_path = pdf_path.relative_to(self.source_dir)
+            parts = relative_path.parts
+
+            # Expected structure: [school, class, subject, filename.pdf]
+            if len(parts) >= 3:
+                school = parts[0]
+                class_name = parts[1]
+                subject = parts[2]
+                return {
+                    'school': school,
+                    'class': class_name,
+                    'subject': subject
+                }
+            else:
+                logger.warning(f"PDF doesn't follow expected hierarchy: {relative_path}")
+                return {
+                    'school': None,
+                    'class': None,
+                    'subject': None
+                }
+        except Exception as e:
+            logger.error(f"Error parsing subject from path {pdf_path}: {e}")
+            return {
+                'school': None,
+                'class': None,
+                'subject': None
+            }
 
     def extract_text_from_pdf(self, pdf_path):
         """
@@ -72,6 +112,11 @@ class PDFExtractor:
             # Combine all text
             full_text = "\n".join([p['content'] for p in text_content])
 
+            # Parse subject information from path hierarchy
+            subject_info = self.parse_subject_from_path(pdf_path)
+            if subject_info['subject']:
+                self.identified_subjects.add(subject_info['subject'])
+
             result = {
                 'pages': num_pages,
                 'text': full_text,
@@ -79,6 +124,9 @@ class PDFExtractor:
                 'metadata': {
                     'source_file': pdf_path.name,
                     'source_path': str(pdf_path),
+                    'school': subject_info['school'],
+                    'class': subject_info['class'],
+                    'subject': subject_info['subject']
                 }
             }
 
@@ -252,7 +300,7 @@ class PDFExtractor:
                     'output_file': str(output_path)
                 })
 
-                # Update manifest with file tracking
+                # Update manifest with file tracking and subject information
                 relative_path_str = str(relative_path)
                 source_hash = self.calculate_file_hash(pdf_path)
                 extracted_hash = hashlib.md5(result['text'].encode()).hexdigest()
@@ -263,6 +311,9 @@ class PDFExtractor:
                     'extracted_pages': result['extracted_pages'],
                     'total_pages': result['pages'],
                     'extraction_status': result.get('extraction_status', 'success'),
+                    'school': result['metadata'].get('school'),
+                    'class': result['metadata'].get('class'),
+                    'subject': result['metadata'].get('subject'),
                     'timestamp': datetime.now().isoformat()
                 }
             else:
@@ -272,6 +323,7 @@ class PDFExtractor:
             'total_files': len(pdf_files),
             'successful': successful,
             'failed': failed,
+            'identified_subjects': sorted(list(self.identified_subjects)),
             'output_directory': str(self.output_dir),
             'files': results
         }
@@ -371,6 +423,8 @@ Examples:
     print(f"Total files processed: {summary['total_files']}")
     print(f"Successful extractions: {summary['successful']}")
     print(f"Failed extractions: {summary['failed']}")
+    if summary.get('identified_subjects'):
+        print(f"Identified subjects: {', '.join(summary['identified_subjects'])}")
     if summary.get('no_text_files', 0) > 0:
         print(f"No-text files (skipped): {summary['no_text_files']}")
     if summary.get('skipped', 0) > 0:

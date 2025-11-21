@@ -194,13 +194,14 @@ class PineconeIndexManager:
             logger.error(f"Error managing index: {e}")
             raise
 
-    def upsert_vectors(self, vectors: List[Tuple[str, List[float], Dict]], batch_size=BATCH_SIZE):
+    def upsert_vectors(self, vectors: List[Tuple[str, List[float], Dict]], batch_size=BATCH_SIZE, namespace=None):
         """
         Upload vectors to Pinecone index
 
         Args:
             vectors: List of (id, embedding, metadata) tuples
             batch_size: Batch size for upsert
+            namespace: Optional namespace for vector isolation (None = default namespace)
         """
         try:
             total_upserted = 0
@@ -218,32 +219,45 @@ class PineconeIndexManager:
                     for vec_id, embedding, metadata in batch
                 ]
 
-                self.index.upsert(vectors=upsert_data)
+                if namespace:
+                    self.index.upsert(vectors=upsert_data, namespace=namespace)
+                else:
+                    self.index.upsert(vectors=upsert_data)
+
                 total_upserted += len(batch)
-                logger.info(f"Upserted {total_upserted}/{len(vectors)} vectors")
+                logger.info(f"Upserted {total_upserted}/{len(vectors)} vectors to namespace '{namespace if namespace else 'default'}'")
                 time.sleep(0.5)  # Rate limiting
 
         except Exception as e:
             logger.error(f"Error upserting vectors: {e}")
             raise
 
-    def search(self, query_embedding: List[float], top_k=5) -> List[Dict]:
+    def search(self, query_embedding: List[float], top_k=5, namespace=None) -> List[Dict]:
         """
         Search similar vectors in Pinecone
 
         Args:
             query_embedding: Query embedding vector
             top_k: Number of top results to return
+            namespace: Optional namespace to search in (None = default namespace)
 
         Returns:
             list: Search results with scores
         """
         try:
-            results = self.index.query(
-                vector=query_embedding,
-                top_k=top_k,
-                include_metadata=True
-            )
+            if namespace:
+                results = self.index.query(
+                    vector=query_embedding,
+                    top_k=top_k,
+                    include_metadata=True,
+                    namespace=namespace
+                )
+            else:
+                results = self.index.query(
+                    vector=query_embedding,
+                    top_k=top_k,
+                    include_metadata=True
+                )
             return results.get('matches', [])
         except Exception as e:
             logger.error(f"Error searching index: {e}")
@@ -259,13 +273,53 @@ class PineconeIndexManager:
 
 
 class EmbeddingPipeline:
-    """Complete pipeline for extraction, chunking, embedding, and storage"""
+    """Complete pipeline for extraction, chunking, embedding, and storage with namespace isolation"""
 
     def __init__(self):
         self.embedder = CloudflareEmbedder()
         self.chunker = TextChunker()
         self.pinecone_manager = PineconeIndexManager()
         self.extracted_dir = Path(EXTRACTED_TEXT_DIR)
+        self.subject_mapping = self._load_subject_mapping()
+        self.namespaces_created = set()
+
+    def _load_subject_mapping(self) -> Dict:
+        """Load subject mapping configuration"""
+        try:
+            mapping_file = Path(__file__).parent / 'subject_mapping.json'
+            if mapping_file.exists():
+                with open(mapping_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            else:
+                logger.warning("subject_mapping.json not found, using namespace-less mode")
+                return None
+        except Exception as e:
+            logger.error(f"Error loading subject mapping: {e}")
+            return None
+
+    def _calculate_namespace(self, metadata: Dict) -> str:
+        """
+        Calculate Pinecone namespace from metadata
+
+        Expected format: {school}_{class}_{subject}
+        e.g., scoala_normala_clasa_0_matematica
+
+        Args:
+            metadata: Document metadata with school, class, subject fields
+
+        Returns:
+            str: Normalized namespace name or None
+        """
+        school = metadata.get('school', '').lower().replace(' ', '_')
+        class_name = metadata.get('class', '').lower().replace(' ', '_')
+        subject = metadata.get('subject', '').lower().replace(' ', '_')
+
+        if school and class_name and subject:
+            namespace = f"{school}_{class_name}_{subject}"
+            return namespace
+        else:
+            logger.warning(f"Incomplete metadata for namespace calculation: {metadata}")
+            return None
 
     def load_extracted_texts(self, limit=None) -> List[Dict]:
         """Load extracted PDF texts"""
@@ -286,14 +340,14 @@ class EmbeddingPipeline:
         return documents
 
     def process_pipeline(self, limit=None):
-        """Run complete pipeline"""
-        logger.info("Starting embedding pipeline...")
+        """Run complete pipeline with namespace-based isolation"""
+        logger.info("Starting embedding pipeline with namespace isolation...")
 
         # Load extracted texts
         documents = self.load_extracted_texts(limit=limit)
         logger.info(f"Loaded {len(documents)} documents")
 
-        # Chunk texts
+        # Chunk texts - include subject metadata for namespace calculation
         all_chunks = []
         for doc in documents:
             chunks = self.chunker.chunk_text(
@@ -301,7 +355,10 @@ class EmbeddingPipeline:
                 metadata={
                     'source_file': doc['metadata']['source_file'],
                     'source_path': doc['metadata'].get('source_path', ''),
-                    'total_pages': doc['pages']
+                    'total_pages': doc['pages'],
+                    'school': doc['metadata'].get('school'),
+                    'class': doc['metadata'].get('class'),
+                    'subject': doc['metadata'].get('subject')
                 }
             )
             all_chunks.extend(chunks)
@@ -314,9 +371,11 @@ class EmbeddingPipeline:
 
         logger.info(f"Generated {len(text_embeddings)} embeddings")
 
-        # Prepare vectors for Pinecone
+        # Prepare vectors grouped by namespace
         # IMPORTANT: Using returned indices ensures metadata stays synced even if some embeddings fail
-        vectors_to_upsert = []
+        vectors_by_namespace = {}
+        vectors_without_namespace = []
+
         for chunk_idx, text, embedding in text_embeddings:
             chunk_data = all_chunks[chunk_idx]  # Use returned index to access correct metadata
 
@@ -326,17 +385,35 @@ class EmbeddingPipeline:
             id_hash = hashlib.md5(f"{source_file}_{chunk_idx}".encode()).hexdigest()[:12]
             vector_id = f"vec_{id_hash}"
 
-            vectors_to_upsert.append((
-                vector_id,
-                embedding,
-                {
-                    'text': text[:500],  # Store first 500 chars
-                    **chunk_data['metadata']
-                }
-            ))
+            vector_metadata = {
+                'text': text[:500],  # Store first 500 chars
+                **chunk_data['metadata']
+            }
 
-        # Upsert to Pinecone
-        self.pinecone_manager.upsert_vectors(vectors_to_upsert)
+            # Calculate namespace from metadata
+            namespace = self._calculate_namespace(chunk_data['metadata'])
+
+            if namespace:
+                if namespace not in vectors_by_namespace:
+                    vectors_by_namespace[namespace] = []
+                vectors_by_namespace[namespace].append((vector_id, embedding, vector_metadata))
+            else:
+                # Fallback: store in default namespace
+                vectors_without_namespace.append((vector_id, embedding, vector_metadata))
+
+        # Upsert vectors to their respective namespaces
+        total_stored = 0
+        for namespace, vectors in vectors_by_namespace.items():
+            logger.info(f"Upserting {len(vectors)} vectors to namespace '{namespace}'")
+            self.pinecone_manager.upsert_vectors(vectors, namespace=namespace)
+            self.namespaces_created.add(namespace)
+            total_stored += len(vectors)
+
+        # Upsert vectors without namespace to default namespace
+        if vectors_without_namespace:
+            logger.info(f"Upserting {len(vectors_without_namespace)} vectors to default namespace (incomplete metadata)")
+            self.pinecone_manager.upsert_vectors(vectors_without_namespace)
+            total_stored += len(vectors_without_namespace)
 
         # Get stats
         stats = self.pinecone_manager.get_index_stats()
@@ -345,7 +422,10 @@ class EmbeddingPipeline:
             'documents_processed': len(documents),
             'chunks_created': len(all_chunks),
             'embeddings_generated': len(text_embeddings),
-            'vectors_stored': len(vectors_to_upsert),
+            'vectors_stored': total_stored,
+            'namespaces_created': sorted(list(self.namespaces_created)),
+            'vectors_in_namespaces': {ns: len(vecs) for ns, vecs in vectors_by_namespace.items()},
+            'vectors_in_default': len(vectors_without_namespace),
             'index_stats': stats,
             'cloudflare_requests': self.embedder.request_count
         }
@@ -367,6 +447,13 @@ def main():
         print(f"Embeddings generated: {summary['embeddings_generated']}")
         print(f"Vectors stored: {summary['vectors_stored']}")
         print(f"Cloudflare API requests: {summary['cloudflare_requests']}")
+        if summary.get('namespaces_created'):
+            print(f"\nNamespaces created: {len(summary['namespaces_created'])}")
+            for ns in summary['namespaces_created']:
+                vec_count = summary['vectors_in_namespaces'].get(ns, 0)
+                print(f"  - {ns}: {vec_count} vectors")
+        if summary.get('vectors_in_default', 0) > 0:
+            print(f"Vectors in default namespace: {summary['vectors_in_default']}")
         print("="*60 + "\n")
 
     except Exception as e:

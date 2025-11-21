@@ -1,0 +1,119 @@
+{
+  "version": "1.0",
+  "description": "Subject mapping configuration for namespace isolation and auto-routing",
+  "last_updated": "2025-11-21",
+  "subjects": [
+    {
+      "primary": "Matematica",
+      "aliases": ["Math", "Aritmetica", "Geometrie", "Algebra"],
+      "keywords": [
+        "plus", "minus", "inmultire", "impartire", "ecuatie", "formula",
+        "teorema", "triunghiu", "dreptunghi", "cerc", "unghi", "latura",
+        "numere", "fracturi", "procente", "calculati", "solutie",
+        "addition", "subtraction", "multiplication", "division", "equation"
+      ],
+      "namespace": "matematica"
+    },
+    {
+      "primary": "Limba Romana",
+      "aliases": ["Romanian Language", "Gramatica", "Limba", "Litere"],
+      "keywords": [
+        "cuvant", "propozitie", "substantiv", "adjectiv", "verb", "literar",
+        "roman", "poveste", "povestire", "auctor", "carte", "capolavra",
+        "gramatica", "ortografie", "sintaxa", "semantica", "citire",
+        "text", "literatura", "scriere", "compunere"
+      ],
+      "namespace": "limba_romana"
+    },
+    {
+      "primary": "Geografie",
+      "aliases": ["Geography", "Geo", "Harta", "Geopolitica"],
+      "keywords": [
+        "tara", "oras", "continent", "ocean", "montan", "rau", "climat",
+        "populatie", "harta", "teritoriu", "granita", "culturi",
+        "geografie", "locatie", "regiune", "provincia", "distanta",
+        "pe harta", "coordonate", "latitudine", "longitudine"
+      ],
+      "namespace": "geografie"
+    },
+    {
+      "primary": "Dezvoltare Personala",
+      "aliases": ["Personal Development", "Dezvoltare", "Competente", "Cultură Civică"],
+      "keywords": [
+        "persoana", "valori", "responsabilitate", "libertate", "drepturi",
+        "datorii", "comunitate", "respect", "toleranta", "comportament",
+        "dezvoltare", "caracter", "personalitate", "autocunoastere",
+        "abilita", "comunicare", "intelegere", "empatia", "civica"
+      ],
+      "namespace": "dezvoltare_personala"
+    },
+    {
+      "primary": "Stiinte Naturale",
+      "aliases": ["Science", "Biologie", "Fizica", "Chimie", "Natural Science"],
+      "keywords": [
+        "organism", "celula", "corp", "planta", "animal", "forta", "energie",
+        "lucrare", "experiment", "laborator", "stiiinta", "fizica", "chimie",
+        "reactie", "element", "molecula", "atom", "temperatura", "presiune",
+        "observatie", "ipoteza", "constatare"
+      ],
+      "namespace": "stiinte_naturale"
+    },
+    {
+      "primary": "Muzica",
+      "aliases": ["Music", "Compozitie", "Instrument", "Arta Muzicala"],
+      "keywords": [
+        "nota", "melodie", "ritm", "compozitie", "instrument", "solist",
+        "orchestra", "simfonie", "concert", "piesa", "muzica", "sunet",
+        "auz", "tonalitate", "armonie", "tempo", "acorduri", "partitie",
+        "musician", "dirija", "sonata", "concert"
+      ],
+      "namespace": "muzica"
+    },
+    {
+      "primary": "Educatie Fizica",
+      "aliases": ["Physical Education", "Sport", "Sport", "Educatie Sportiva"],
+      "keywords": [
+        "sport", "exercitiu", "miscare", "muchi", "corp", "fitness",
+        "antrenament", "competitie", "joc", "echipa", "campionat",
+        "ruliu", "alergare", "plimbare", "inot", "gheata", "fotbal",
+        "baschet", "volei", "tenis", "atletism", "performanta"
+      ],
+      "namespace": "educatie_fizica"
+    },
+    {
+      "primary": "Arta Plastica",
+      "aliases": ["Art", "Pictură", "Desenare", "Desen"],
+      "keywords": [
+        "culoare", "forma", "desen", "pictura", "sculptura", "arta",
+        "linii", "perie", "creion", "creatie", "artistului", "tehnica",
+        "compoziție", "perspectiva", "proportie", "lumina", "umbra",
+        "imagine", "tablou", "grajd", "obiect", "model"
+      ],
+      "namespace": "arta_plastica"
+    },
+    {
+      "primary": "Istoria",
+      "aliases": ["History", "Istorie", "Trecut", "Eveniment Istoric"],
+      "keywords": [
+        "epoca", "an", "rege", "imparat", "razboi", "pace", "revolutie",
+        "cultura", "civilizatie", "imperiu", "regat", "dinastie",
+        "istoric", "istorie", "document", "dovada", "monument",
+        "traditie", "patrimoniu", "mostenitore", "generatie"
+      ],
+      "namespace": "istoria"
+    }
+  ],
+  "namespace_format": "{school}_{class}_{subject}",
+  "example_namespaces": [
+    "scoala_normala_clasa_0_matematica",
+    "scoala_normala_clasa_0_limba_romana",
+    "scoala_normala_clasa_0_geografie",
+    "scoala_de_muzica_george_enescu_clasa_0_muzica"
+  ],
+  "notes": {
+    "auto_routing": "For --auto-route mode, keywords are used to determine subject when user doesn't specify",
+    "namespace_creation": "Pinecone namespaces follow format: {school}_{class}_{subject} with lowercase and underscores",
+    "fallback": "If no subject can be determined from path or keywords, default namespace is used",
+    "case_sensitivity": "Keywords are case-insensitive for matching"
+  }
+}
