@@ -187,7 +187,7 @@ class ExtractionValidator:
             print(f"[ERROR] Extraction directory not found: {self.extracted_dir}")
             return None
 
-        json_files = list(self.extracted_dir.glob('*_extracted.json'))
+        json_files = list(self.extracted_dir.rglob('*_extracted.json'))
         print(f"Found {len(json_files)} extracted files\n")
 
         total_pages = 0
