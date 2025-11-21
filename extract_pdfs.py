@@ -1,11 +1,13 @@
 """
 Extract text content from PDF files
-Supports batch processing of multiple PDFs
+Supports batch processing of multiple PDFs with CLI arguments
 """
 
 import os
 import json
 import logging
+import argparse
+import sys
 from pathlib import Path
 from PyPDF2 import PdfReader
 from config import PDF_SOURCE_DIR, EXTRACTED_TEXT_DIR, LOG_LEVEL
@@ -44,11 +46,14 @@ class PDFExtractor:
             for page_num, page in enumerate(reader.pages, 1):
                 try:
                     text = page.extract_text()
-                    if text.strip():
+                    # Guard against None (e.g., scanned PDFs, corrupted pages)
+                    if text and text.strip():
                         text_content.append({
                             'page': page_num,
                             'content': text
                         })
+                    elif not text:
+                        logger.debug(f"Page {page_num} from {pdf_path.name}: no extractable text (scanned?)")
                 except Exception as e:
                     logger.warning(f"Error extracting page {page_num} from {pdf_path.name}: {e}")
 
@@ -98,13 +103,14 @@ class PDFExtractor:
 
         return found_pdfs
 
-    def extract_all(self, specific_folders=None):
+    def extract_all(self, specific_folders=None, limit=None):
         """
         Extract text from all PDFs in source directory
 
         Args:
             specific_folders: list of specific folder names to process
                             if None, process all PDFs
+            limit: maximum number of PDFs to process
 
         Returns:
             dict: {total_files: int, successful: int, failed: int, files: list}
@@ -113,6 +119,10 @@ class PDFExtractor:
             pdf_files = self.extract_specific_folders(specific_folders)
         else:
             pdf_files = list(self.source_dir.rglob('*.pdf'))
+
+        # Apply limit if specified
+        if limit:
+            pdf_files = pdf_files[:limit]
 
         logger.info(f"Processing {len(pdf_files)} PDF files")
 
@@ -165,23 +175,72 @@ class PDFExtractor:
 
 
 def main():
-    """Main entry point for PDF extraction"""
+    """Main entry point for PDF extraction with CLI argument support"""
 
-    # Define which folders to process
-    specific_folders = [
-        'Scoala_de_Muzica_George_Enescu',
-        'Scoala_Normala'
-    ]
+    # Setup argument parser
+    parser = argparse.ArgumentParser(
+        description='Extract text from PDF files',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python extract_pdfs.py                    # Default: process 2 school folders
+  python extract_pdfs.py --all              # Process all folders in materiale_didactice
+  python extract_pdfs.py --folders Scoala_de_Muzica_George_Enescu  # Process specific folder
+  python extract_pdfs.py --folders Folder1 Folder2 Folder3         # Process multiple folders
+  python extract_pdfs.py --limit 50         # Process max 50 PDFs from default folders
+        """
+    )
 
+    parser.add_argument(
+        '--all',
+        action='store_true',
+        help='Process all folders in materiale_didactice (default: only 2 school folders)'
+    )
+    parser.add_argument(
+        '--folders',
+        nargs='+',
+        help='Specify which folders to process (e.g., --folders Scoala_de_Muzica_George_Enescu Scoala_Normala)'
+    )
+    parser.add_argument(
+        '--limit',
+        type=int,
+        help='Limit number of PDFs to process'
+    )
+
+    args = parser.parse_args()
+
+    # Determine which folders to process
+    specific_folders = None
+
+    if args.folders:
+        # User specified folders
+        specific_folders = args.folders
+        logger.info(f"Processing specified folders: {args.folders}")
+    elif args.all:
+        # Process all folders
+        logger.info("Processing all folders in materiale_didactice")
+        specific_folders = None  # Will process everything
+    else:
+        # Default behavior: process 2 school folders
+        specific_folders = [
+            'Scoala_de_Muzica_George_Enescu',
+            'Scoala_Normala'
+        ]
+        logger.info(f"Processing default folders: {specific_folders}")
+
+    # Create extractor and process
     extractor = PDFExtractor()
-    summary = extractor.extract_all(specific_folders=specific_folders)
+    summary = extractor.extract_all(specific_folders=specific_folders, limit=args.limit)
 
+    # Print summary
     print("\n" + "="*60)
     print("PDF EXTRACTION SUMMARY")
     print("="*60)
     print(f"Total files processed: {summary['total_files']}")
     print(f"Successful extractions: {summary['successful']}")
     print(f"Failed extractions: {summary['failed']}")
+    if args.limit:
+        print(f"(Limited to: {args.limit} PDFs)")
     print(f"Output directory: {summary['output_directory']}")
     print("="*60 + "\n")
 

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Test search functionality against Pinecone index
 Validates that embeddings are correctly stored and searchable
@@ -7,6 +8,14 @@ SETUP REQUIRED:
 2. Set PINECONE_API_KEY in .env
 3. Run generate_embeddings.py first to populate the index
 """
+
+import sys
+import io
+
+# Force UTF-8 encoding for Windows console compatibility
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 import json
 import logging
@@ -92,9 +101,11 @@ class SearchTester:
             results = self.search_query(query, top_k=top_k)
 
             if results:
-                print(f"Found {len(results)} results:\n")
+                # Sort results by score descending to ensure correct ranking
+                sorted_results = sorted(results, key=lambda x: x.get('score', 0), reverse=True)
+                print(f"Found {len(sorted_results)} results:\n")
 
-                for rank, result in enumerate(results, 1):
+                for rank, result in enumerate(sorted_results, 1):
                     metadata = result.get('metadata', {})
                     score = result.get('score', 0)
                     text_preview = metadata.get('text', '')[:100]
@@ -107,8 +118,8 @@ class SearchTester:
 
                 results_summary.append({
                     'query': query,
-                    'results_found': len(results),
-                    'top_score': results[0].get('score', 0) if results else 0,
+                    'results_found': len(sorted_results),
+                    'top_score': sorted_results[0].get('score', 0) if sorted_results else 0,
                     'status': 'SUCCESS'
                 })
             else:
@@ -127,7 +138,8 @@ class SearchTester:
         print("SEARCH TEST SUMMARY")
         print("="*80)
         for result in results_summary:
-            status_symbol = "✓" if result['status'] == 'SUCCESS' else "✗"
+            # Use ASCII symbols for Windows compatibility (avoid Unicode encoding issues)
+            status_symbol = "[OK]" if result['status'] == 'SUCCESS' else "[FAIL]"
             print(f"{status_symbol} Query: '{result['query']}'")
             print(f"  Results: {result['results_found']}, Top Score: {result['top_score']:.4f}")
         print("="*80 + "\n")
@@ -171,7 +183,7 @@ class ExtractionValidator:
         print("="*80 + "\n")
 
         if not self.extracted_dir.exists():
-            print(f"✗ Extraction directory not found: {self.extracted_dir}")
+            print(f"[ERROR] Extraction directory not found: {self.extracted_dir}")
             return None
 
         json_files = list(self.extracted_dir.glob('*_extracted.json'))
@@ -236,11 +248,11 @@ def main():
 
             # Define test queries - optimized for educational content
             test_queries = [
-                "muzică clasică și educație",
-                "metode de predare și pedagogie",
-                "dezvoltarea inteligenței copilului",
-                "arte vizuale și practică",
-                "curriculum și competențe"
+                "muzica clasica si educatie",
+                "metode de predare si pedagogie",
+                "dezvoltarea inteligentei copilului",
+                "arte vizuale si practica",
+                "curriculum si competente"
             ]
 
             # Run tests

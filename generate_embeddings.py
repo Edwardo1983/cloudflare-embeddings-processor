@@ -94,7 +94,7 @@ class CloudflareEmbedder:
             logger.error(f"Error generating embedding: {e}")
             return None
 
-    def generate_embeddings_batch(self, texts: List[str]) -> List[Tuple[str, List[float]]]:
+    def generate_embeddings_batch(self, texts: List[str]) -> List[Tuple[int, str, List[float]]]:
         """
         Generate embeddings for multiple texts
 
@@ -102,18 +102,18 @@ class CloudflareEmbedder:
             texts: List of text strings
 
         Returns:
-            list: List of (text, embedding) tuples
+            list: List of (index, text, embedding) tuples - preserves original index for sync
         """
         results = []
-        for i, text in enumerate(texts, 1):
+        for i, text in enumerate(texts):
             embedding = self.generate_embedding(text)
             if embedding:
-                results.append((text, embedding))
-                if i % 10 == 0:
-                    logger.info(f"Generated {i}/{len(texts)} embeddings")
+                results.append((i, text, embedding))  # Include original index for metadata sync
+                if (i + 1) % 10 == 0:
+                    logger.info(f"Generated {i + 1}/{len(texts)} embeddings")
                 time.sleep(0.1)  # Rate limiting
             else:
-                logger.warning(f"Failed to generate embedding for text chunk {i}")
+                logger.warning(f"Failed to generate embedding for chunk {i} (skipping to prevent metadata misalignment)")
 
         return results
 
@@ -307,17 +307,18 @@ class EmbeddingPipeline:
 
         logger.info(f"Created {len(all_chunks)} text chunks")
 
-        # Generate embeddings
+        # Generate embeddings (returns tuples with original indices for metadata sync)
         texts_to_embed = [chunk['text'] for chunk in all_chunks]
         text_embeddings = self.embedder.generate_embeddings_batch(texts_to_embed)
 
         logger.info(f"Generated {len(text_embeddings)} embeddings")
 
         # Prepare vectors for Pinecone
+        # IMPORTANT: Using returned indices ensures metadata stays synced even if some embeddings fail
         vectors_to_upsert = []
-        for i, (text, embedding) in enumerate(text_embeddings):
-            chunk_data = all_chunks[i]
-            vector_id = f"chunk_{i}_{int(time.time())}"
+        for chunk_idx, text, embedding in text_embeddings:
+            chunk_data = all_chunks[chunk_idx]  # Use returned index to access correct metadata
+            vector_id = f"chunk_{chunk_idx}_{int(time.time())}"
 
             vectors_to_upsert.append((
                 vector_id,

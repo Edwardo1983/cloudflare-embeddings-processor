@@ -80,13 +80,34 @@ LOG_LEVEL=INFO
 
 ### 1. Extract Text from PDFs
 
+**Default usage** (processes 2 school folders):
 ```bash
 python extract_pdfs.py
 ```
 
-Extracts text from specific folders:
-- `Scoala_de_Muzica_George_Enescu`
-- `Scoala_Normala`
+**Advanced CLI options**:
+```bash
+# Process all folders in materiale_didactice
+python extract_pdfs.py --all
+
+# Process specific folder(s)
+python extract_pdfs.py --folders Scoala_de_Muzica_George_Enescu
+python extract_pdfs.py --folders Folder1 Folder2 Folder3
+
+# Limit number of PDFs processed
+python extract_pdfs.py --limit 50
+python extract_pdfs.py --limit 100 --all
+
+# Combine options
+python extract_pdfs.py --folders Scoala_Normala --limit 20
+```
+
+**Help**:
+```bash
+python extract_pdfs.py --help
+```
+
+Extracts text from specified folders with robust error handling for scanned/corrupted PDFs.
 
 Output: `extracted_texts/extraction_summary.json`
 
@@ -167,6 +188,32 @@ Central configuration management with environment variable support.
 - PDF extraction: ~50ms per page
 - Embedding generation: ~100ms per chunk (via Cloudflare API)
 - Pinecone upsert: ~10ms per batch (32 vectors)
+
+## Optimizations (v2.0)
+
+### 1. **CLI Arguments for extract_pdfs.py**
+- Flexible folder selection: `--folders Folder1 Folder2`, `--all`
+- PDF limit support: `--limit N`
+- Smart defaults with help text via `--help`
+- Prevents hard-coded folder lists; adapts to directory structure changes
+
+### 2. **Robust PDF Extraction**
+- **None guard**: Handles scanned PDFs and corrupted pages gracefully
+- Fixed: `if text and text.strip()` (was `if text.strip()`, causing AttributeError)
+- Logs debug messages for non-extractable pages
+- Batch processing continues even if individual PDFs fail
+
+### 3. **Fixed Metadata Sync in Embedding Pipeline** (Critical)
+- Changed embedding return: `(text, embedding)` → `(index, text, embedding)`
+- Prevents metadata misalignment when embedding requests fail
+- Each vector maintains correct chunk index using returned indices
+- Ensures data integrity: No more off-by-one errors in metadata
+
+### 4. **Windows Console Encoding Support**
+- Added UTF-8 encoding wrapper for cross-platform compatibility
+- Replaces Unicode symbols (✓/✗) with ASCII alternatives ([OK]/[FAIL])
+- Sorted search results by score descending for correct ranking
+- Handles Romanian text and special characters correctly
 
 ## Troubleshooting
 
